@@ -20,6 +20,7 @@ TSG Builder was born out of this frustration. The idea: **you provide a raw dump
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Agent Versioning](#agent-versioning)
 - [Makefile Commands](#makefile-commands)
 - [How It Works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -219,6 +220,54 @@ Run `make ui` and open http://localhost:5000
 #### MODEL_DEPLOYMENT_NAME
 1. In AI Foundry Portal, go to Deployments
 2. Use the name of your deployed model (e.g., `gpt-4.1`)
+
+## Agent Versioning
+
+TSG Builder tracks prompt versions to ensure your agents use the latest instructions.
+
+### Checking Version Status
+
+View agent version in multiple ways:
+
+**Command Line:**
+```bash
+python validate_setup.py
+```
+
+**Web UI:**
+- Version status shown in setup/settings section if update available
+- Check browser console or logs for version info
+
+**Logs:**
+- Application startup logs show version status
+
+### Understanding Versions
+
+Prompt versions follow semantic versioning (MAJOR.MINOR):
+- **MAJOR**: Breaking changes requiring recreation
+- **MINOR**: Compatible improvements and fixes
+
+Current version: Check `PROMPT_VERSION` in `tsg_constants.py` (currently v1.1)
+
+### Updating Agents
+
+When prompts are updated and your agents are outdated:
+
+1. **Notification**: Web UI displays "Agent Update Available" banner in setup/settings section
+2. **Review Changes**: Check [PROMPT_CHANGELOG.md](PROMPT_CHANGELOG.md) for details
+3. **Update**: Click "Update Agents" in the banner (opens setup wizard)
+4. **Confirmation**: System will delete old agents and create new ones
+
+**Note:** Updating agents deletes the old ones and creates new ones with current prompts. This is a normal part of the update process.
+
+### Backward Compatibility
+
+Existing installations without versioning continue to work:
+- Old `.agent_ids.json` files are automatically detected
+- Version defaults to `0.0` (pre-versioning)
+- Warning displayed recommending recreation
+
+See [PROMPT_CHANGELOG.md](PROMPT_CHANGELOG.md) for full version history.
 
 ## Makefile Commands
 

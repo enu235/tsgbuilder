@@ -311,6 +311,11 @@
             to { transform: rotate(360deg); }
         }
 
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
         .activity-feed {
             display: flex;
             flex-direction: column;
@@ -763,6 +768,44 @@
         /* Hidden file input */
         .image-input {
             display: none;
+        }
+
+        /* Version Banner Styles */
+        .version-banner {
+            background: #fff4ce;
+            border: 1px solid var(--warning);
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .version-banner strong {
+            color: var(--warning);
+            font-size: 14px;
+        }
+
+        .version-banner p {
+            margin: 0;
+            font-size: 13px;
+            color: var(--text);
+        }
+
+        .version-banner .version {
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .version-banner-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .version-banner .btn {
+            padding: 6px 16px;
+            font-size: 13px;
         }
     </style>
 </head>
@@ -1476,6 +1519,19 @@ Include:
                 <button class="modal-close" onclick="closeSetup()">&times;</button>
             </div>
             <div class="modal-body">
+                <!-- Version Status Banner -->
+                <div id="versionBanner" class="version-banner hidden">
+                    <strong>⚠️ Agent Update Available</strong>
+                    <p>
+                        Your agents are running on prompt version <span id="agentVersion" class="version"></span>,
+                        but version <span id="currentVersion" class="version"></span> is now available.
+                    </p>
+                    <div class="version-banner-actions">
+                        <button class="btn btn-primary btn-sm" onclick="showAgentCreationStep()">Update Agents</button>
+                        <button class="btn btn-secondary btn-sm" onclick="dismissVersionBanner()">Dismiss</button>
+                    </div>
+                </div>
+
                 <!-- Step 1: Configuration -->
                 <div class="setup-section">
                     <h3><span class="step-number">1</span> Azure Configuration</h3>
@@ -1570,12 +1626,50 @@ Include:
         async function openSetup() {
             document.getElementById('setupModal').classList.remove('hidden');
             await loadConfig();
+            await checkVersionStatus();
             updateSetupOverallStatus();
         }
 
         function closeSetup() {
             document.getElementById('setupModal').classList.add('hidden');
             checkStatus(); // Refresh main status
+        }
+
+        // Version checking functions
+        async function checkVersionStatus() {
+            try {
+                const response = await fetch('/api/version-status');
+                const data = await response.json();
+
+                if (data.update_recommended) {
+                    document.getElementById('agentVersion').textContent = data.agent_version;
+                    document.getElementById('currentVersion').textContent = data.current_version;
+                    document.getElementById('versionBanner').classList.remove('hidden');
+                } else {
+                    document.getElementById('versionBanner').classList.add('hidden');
+                }
+            } catch (error) {
+                console.error('Failed to check version status:', error);
+                // Hide banner on error
+                document.getElementById('versionBanner').classList.add('hidden');
+            }
+        }
+
+        function dismissVersionBanner() {
+            document.getElementById('versionBanner').classList.add('hidden');
+        }
+
+        function showAgentCreationStep() {
+            // Scroll to the agent creation section
+            const agentSection = document.querySelector('.setup-section:last-of-type');
+            if (agentSection) {
+                agentSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            // Optionally highlight the create agents button
+            const createBtn = document.getElementById('createAgentBtn');
+            if (createBtn && !createBtn.disabled) {
+                createBtn.style.animation = 'pulse 1s ease-in-out 3';
+            }
         }
 
         async function loadConfig() {
@@ -1712,6 +1806,7 @@ Include:
                     `;
                     
                     btn.textContent = '✓ Agents Created';
+                    dismissVersionBanner();  // Hide version banner after successful creation
                     updateSetupOverallStatus();
                 } else {
                     status.textContent = '✗ ' + result.error;

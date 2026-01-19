@@ -59,9 +59,15 @@ def delete_agents(skip_confirm: bool = False) -> bool:
     
     # Show what will be deleted
     name_prefix = data.get("name_prefix", "TSG")
-    print(f"\nAgents to delete (prefix: {name_prefix}):")
+    agent_version = data.get("prompt_version", "unknown")
+    created_at = data.get("created_at", "unknown")
+
+    print(f"\nAgents to delete:")
+    print(f"  Name prefix: {name_prefix}")
+    print(f"  Prompt version: {agent_version}")
+    print(f"  Created: {created_at}")
     for role, agent_id in agents.items():
-        print(f"  - {role}: {agent_id}")
+        print(f"  {role.capitalize()}: {agent_id}")
     
     # Confirm unless --yes flag
     if not skip_confirm:

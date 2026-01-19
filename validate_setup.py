@@ -121,16 +121,29 @@ def check_project_connection(endpoint: str) -> bool:
 
 def check_agent_ref() -> bool:
     """Check if agent IDs file exists."""
+    from tsg_constants import PROMPT_VERSION
+
     print("\n[4/5] Checking pipeline agents...")
-    
+
     agent_ids_file = Path(".agent_ids.json")
-    
+
     if agent_ids_file.exists():
         import json
         try:
             data = json.loads(agent_ids_file.read_text(encoding="utf-8"))
             prefix = data.get("name_prefix", "TSG")
-            print_ok(f"3 pipeline agents configured ({prefix})")
+            agent_version = data.get("prompt_version", "0.0")
+
+            # Display version status with appropriate indicator
+            if agent_version == PROMPT_VERSION:
+                print_ok(f"3 pipeline agents configured ({prefix}) - v{agent_version} ✓")
+            elif agent_version == "0.0":
+                print_warn(f"3 pipeline agents configured ({prefix}) - created before versioning")
+                print("      Recommend recreating to enable version tracking")
+            else:
+                print_warn(f"3 pipeline agents configured ({prefix}) - v{agent_version} (current: v{PROMPT_VERSION})")
+                print("      Consider recreating agents to use latest prompts")
+
             return True
         except (json.JSONDecodeError, IOError) as e:
             print_warn(f"Agent IDs file exists but is invalid: {e}")

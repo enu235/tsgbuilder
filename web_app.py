@@ -14,6 +14,7 @@ import queue
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Generator
+from datetime import datetime
 
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from dotenv import load_dotenv, find_dotenv, set_key
@@ -44,6 +45,7 @@ from tsg_constants import (
     RESEARCH_STAGE_INSTRUCTIONS,
     WRITER_STAGE_INSTRUCTIONS,
     REVIEW_STAGE_INSTRUCTIONS,
+    PROMPT_VERSION,  # NEW: Version tracking for agents
 )
 
 # Import pipeline for multi-stage generation
@@ -59,6 +61,28 @@ app = Flask(__name__)
 
 # Store active sessions (thread_id -> session data)
 sessions: dict[str, dict] = {}
+
+
+def check_and_log_version_status():
+    """Check version status on startup and log warnings."""
+    try:
+        agent_ids = get_agent_ids()
+        agent_version = agent_ids.get("prompt_version", "0.0")
+
+        if agent_version != PROMPT_VERSION:
+            app.logger.warning(
+                f"Agent version mismatch! "
+                f"Agents: v{agent_version}, Current prompts: v{PROMPT_VERSION}. "
+                f"Consider recreating agents to use latest prompts."
+            )
+        else:
+            app.logger.info(f"Agents running on prompt version v{PROMPT_VERSION}")
+    except ValueError:
+        pass  # No agents yet, which is fine
+
+
+# Check version status on startup
+check_and_log_version_status()
 
 
 class SSEEventHandler(AgentEventHandler):
@@ -206,31 +230,45 @@ AGENT_IDS_FILE = Path(".agent_ids.json")
 
 
 def get_agent_ids() -> dict:
-    """Get all pipeline agent IDs from JSON file.
-    
-    Returns dict with keys: researcher, writer, reviewer, name_prefix
-    Raises ValueError if agents not configured.
-    """
+    """Get agent IDs from JSON file with version compatibility."""
     if not AGENT_IDS_FILE.exists():
-        raise ValueError("No agents configured. Use Setup to create agents.")
-    
+        raise ValueError("No agent IDs file found. Use Setup to create agents.")
+
     data = json.loads(AGENT_IDS_FILE.read_text(encoding="utf-8"))
-    
-    required = ["researcher", "writer", "reviewer"]
+
+    # Backward compatibility for pre-versioned files
+    if "prompt_version" not in data:
+        data["prompt_version"] = "0.0"
+        app.logger.warning(
+            "Agent IDs file created before versioning system. "
+            "Consider recreating agents to track versions."
+        )
+
+    # Validate required fields
+    required = ["researcher", "writer", "reviewer", "name_prefix"]
     missing = [k for k in required if not data.get(k)]
     if missing:
         raise ValueError(f"Missing agent IDs: {', '.join(missing)}. Use Setup to recreate agents.")
-    
+
     return data
 
 
-def save_agent_ids(researcher: str, writer: str, reviewer: str, name_prefix: str):
-    """Save all pipeline agent IDs to JSON file."""
+def save_agent_ids(
+    researcher: str,
+    writer: str,
+    reviewer: str,
+    name_prefix: str,
+    prompt_version: str = None,
+    created_at: str = None,
+):
+    """Save all pipeline agent IDs to JSON file with version info."""
     data = {
         "researcher": researcher,
         "writer": writer,
         "reviewer": reviewer,
         "name_prefix": name_prefix,
+        "prompt_version": prompt_version or PROMPT_VERSION,
+        "created_at": created_at or datetime.utcnow().isoformat() + "Z",
     }
     AGENT_IDS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -518,6 +556,43 @@ def api_config_set():
     })
 
 
+@app.route("/api/version-status")
+def api_version_status():
+    """Return version status for UI display."""
+    try:
+        agent_ids = get_agent_ids()
+        agent_version = agent_ids.get("prompt_version", "0.0")
+
+        # Parse versions for comparison
+        def parse_version(v):
+            parts = v.split(".")
+            return {
+                "major": int(parts[0]) if parts[0].isdigit() else 0,
+                "minor": int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            }
+
+        current = parse_version(PROMPT_VERSION)
+        agent = parse_version(agent_version)
+
+        update_recommended = (
+            agent["major"] < current["major"] or
+            (agent["major"] == current["major"] and agent["minor"] < current["minor"])
+        )
+
+        return jsonify({
+            "current_version": PROMPT_VERSION,
+            "agent_version": agent_version,
+            "match": agent_version == PROMPT_VERSION,
+            "update_recommended": update_recommended,
+            "created_at": agent_ids.get("created_at"),
+        })
+    except ValueError:
+        return jsonify({
+            "current_version": PROMPT_VERSION,
+            "agents_exist": False,
+        })
+
+
 @app.route("/api/create-agent", methods=["POST"])
 def api_create_agent():
     """Create all three pipeline agents (Researcher, Writer, Reviewer)."""
@@ -543,56 +618,77 @@ def api_create_agent():
     
     try:
         project = AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential())
-        
+
         # Build tools for research agent (Bing + MCP)
         research_tools = []
         bing_tool = BingGroundingTool(connection_id=conn_id)
         research_tools.extend(bing_tool.definitions)
-        
+
         mcp_tool = McpTool(server_label="learn", server_url=LEARN_MCP_URL)
         mcp_tool.set_approval_mode("never")
         research_tools.extend(mcp_tool.definitions)
-        
+
         created_agents = {}
-        
+        timestamp = datetime.utcnow().isoformat() + "Z"
+
         with project:
             # Create Researcher agent (with tools)
             researcher = project.agents.create_agent(
                 model=model,
                 name=f"{agent_name}-Researcher",
+                description=f"TSG Builder Researcher agent v{PROMPT_VERSION}",
                 instructions=RESEARCH_STAGE_INSTRUCTIONS,
+                metadata={
+                    "prompt_version": PROMPT_VERSION,
+                    "created_at": timestamp,
+                    "role": "researcher",
+                },
                 tools=research_tools,
                 tool_resources=mcp_tool.resources,
                 temperature=0,
             )
             created_agents["researcher"] = researcher.id
-            
+
             # Create Writer agent (no tools)
             writer = project.agents.create_agent(
                 model=model,
                 name=f"{agent_name}-Writer",
+                description=f"TSG Builder Writer agent v{PROMPT_VERSION}",
                 instructions=WRITER_STAGE_INSTRUCTIONS,
+                metadata={
+                    "prompt_version": PROMPT_VERSION,
+                    "created_at": timestamp,
+                    "role": "writer",
+                },
                 tools=None,
                 temperature=0,
             )
             created_agents["writer"] = writer.id
-            
+
             # Create Reviewer agent (no tools)
             reviewer = project.agents.create_agent(
                 model=model,
                 name=f"{agent_name}-Reviewer",
+                description=f"TSG Builder Reviewer agent v{PROMPT_VERSION}",
                 instructions=REVIEW_STAGE_INSTRUCTIONS,
+                metadata={
+                    "prompt_version": PROMPT_VERSION,
+                    "created_at": timestamp,
+                    "role": "reviewer",
+                },
                 tools=None,
                 temperature=0,
             )
             created_agents["reviewer"] = reviewer.id
-        
-        # Save all agent IDs
+
+        # Save all agent IDs with version info
         save_agent_ids(
             researcher=created_agents["researcher"],
             writer=created_agents["writer"],
             reviewer=created_agents["reviewer"],
             name_prefix=agent_name,
+            prompt_version=PROMPT_VERSION,
+            created_at=timestamp,
         )
         
         return jsonify({
